@@ -1,4 +1,5 @@
 ﻿using LinearProgramming.LinearProgramming;
+using LinearProgramming.LinearProgramming.Simplex;
 using MathNet.Numerics.LinearAlgebra;
 using System;
 using System.Collections.Generic;
@@ -10,16 +11,20 @@ namespace LinearProgramming.LinearProgramming
 {
     internal class SimplexModel
     {
-        public List<string> X;
+        public List<SimplexTableua> candidates = new List<SimplexTableua>();
+        public SimplexTableua bestCandidate;
 
+        public List<string> X;
         public List<string> Xbv;
         List<string> Xint = new string[] { }.ToList();
+        public bool branch;
 
         public double z;
         public Matrix<double> A, b, C = Matrix<double>.Build.Dense(1,1);
         public int objective = 1;
-        public SimplexModel(string input)
+        public SimplexModel(string input, bool branch = true)
         {
+            this.branch = branch;
             List<string> splitInput = input.Split('\n').ToList();
             string objectiveFunction = splitInput[0];
             List<string> constraintStrings = splitInput.ToList().GetRange(1, splitInput.Count - 1);
@@ -44,10 +49,41 @@ namespace LinearProgramming.LinearProgramming
             this.C = Matrix<double>.Build.DenseOfRowArrays(oCoeff).Append(Matrix<double>.Build.Dense(1, constraints.Count, 0)) * (-1);
 
             GetSignRestrictions(constraintStrings[constraintStrings.Count - 1]);
-            SimplexTableua ti = new SimplexTableua(X, Xbv, C, A, b, objective, this.Xint);
+            SimplexTableua ti = new SimplexTableua(X, Xbv, C, A, b, objective, this.Xint, branch ? "branch" : "cut");
+
+            PreorderTraversal(ti);
+
+            for(int i = 0; i < candidates.Count; i++)
+            {
+                candidates[i].candidate = i;
+                candidates[i].GetTable();
+            }
+
+            this.bestCandidate = candidates.Find(c => c.z == candidates.Max(candidate => candidate.z));
+
+            SimplexSensitivityAnalysis se = new SimplexSensitivityAnalysis(constraints, X.GetRange(0, oCoeff.Length).ToList(), b, C.SubMatrix(0,1,0, oCoeff.Length)*-1);
+            se.SolveWithMicrosoftSolver();
         }
 
-        private static List<Constraint> GetConstraints(List<string> constraintStrings)
+        public void PreorderTraversal(SimplexTableua node)
+        {
+            if (node == null)
+            {
+                return;
+            }
+
+            if(node.next == null && node.branchL == null && node.branchR == null)
+            {
+                candidates.Add(node);
+            }
+
+            node.GetTable();
+            PreorderTraversal(node.next);
+            PreorderTraversal(node.branchL);
+            PreorderTraversal(node.branchR);
+        }
+
+        private List<Constraint> GetConstraints(List<string> constraintStrings)
         {
             List<Constraint> constraints = new List<Constraint>();
             List<string> regConstraints = constraintStrings.Where((constraint) => Regex.IsMatch(constraint, @"[<=|>=|=]+")).ToList();
@@ -65,7 +101,7 @@ namespace LinearProgramming.LinearProgramming
                     constraints.Add(new Constraint(coefs, ConstraintType.gte, rhs, i + 1));
                 }
                 else
-                    constraints.Add(new Constraint(coefs, sign == "<=" ? ConstraintType.lte : ConstraintType.gte, rhs, i + 1));
+                constraints.Add(new Constraint(coefs, sign == "<=" ? ConstraintType.lte : ConstraintType.gte, rhs, i + 1));
             }
             return constraints;
         }
@@ -92,23 +128,6 @@ namespace LinearProgramming.LinearProgramming
                 }
             }
             return Xint;
-        }
-
-        private void GetBasicVariables()
-        {
-            //Matrix<double> id = M.DenseIdentity(model.A.RowCount, model.A.ColumnCount);
-            //Matrix<double> nullRow = M.Dense(1, model.A.ColumnCount);
-            //Matrix<double> basicReference = id.InsertRow(0, V.DenseOfArray(nullRow.ToRowMajorArray()));
-            //Matrix<double> lhsM = this.previous == null
-            //    ? this.model.A.InsertRow(0, V.DenseOfArray(nullRow.ToRowMajorArray()))
-            //    : this.previous.A.InsertRow(0, V.DenseOfArray(nullRow.ToRowMajorArray()));
-            //
-            // Get Basic Variables
-            //for (int i = 0; i < basicReference.RowCount - 1; i++)
-            //{
-            //    int positionIndex = lhsM.ToColumnArrays().ToList().Select((c) => Convert.ToInt32(c.SequenceEqual(basicReference.ToColumnArrays()[i]))).ToList().IndexOf(1);
-            //    this.Xbv[i] = model.X[positionIndex];
-            //}
         }
     }
 }

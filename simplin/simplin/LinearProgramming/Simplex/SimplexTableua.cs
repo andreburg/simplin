@@ -1,5 +1,6 @@
 ﻿using MathNet.Numerics;
 using MathNet.Numerics.LinearAlgebra;
+using Microsoft.SolverFoundation.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,12 +10,18 @@ namespace LinearProgramming.LinearProgramming
     internal class SimplexTableua
     {
         public SimplexTableua previous;
+        public SimplexTableua next;
+        public SimplexTableua branchL;
+        public SimplexTableua branchR;
+
+        string handleInt;
 
         int objective;
 
+        public int candidate;
+
         List<string> X = new string[] { }.ToList();
         List<string> Xbv = new string[] { }.ToList();
-
         List<string> Xint = new string[] { }.ToList();
 
         bool feasible = false;
@@ -32,7 +39,7 @@ namespace LinearProgramming.LinearProgramming
         Matrix<double> b = M.DenseOfArray(new double[,] { });
         public double z = 0;
 
-        public SimplexTableua(List<string> X, List<string> Xbv, Matrix<double> C, Matrix<double> A, Matrix<double> b, int objective, List<string> Xint)
+        public SimplexTableua(List<string> X, List<string> Xbv, Matrix<double> C, Matrix<double> A, Matrix<double> b, int objective, List<string> Xint, string handleInt = "branch")
         {
             this.X = X;
             this.Xbv = Xbv;
@@ -41,12 +48,14 @@ namespace LinearProgramming.LinearProgramming
             this.b = b;
             this.objective = objective;
             this.Xint = Xint;
+            this.handleInt = handleInt;
 
             this.IteratateSimplex();
         }
         public SimplexTableua(SimplexTableua previous)
         {
             SetFromPrevious((SimplexTableua)previous.MemberwiseClone());
+
             this.IteratateSimplex();
         }
 
@@ -66,6 +75,32 @@ namespace LinearProgramming.LinearProgramming
             this.IteratateSimplex();
         }
 
+        public SimplexTableua(SimplexTableua initial, List<string> Xbv ,string constraintName, Tuple<Matrix<double>, double> constraint)
+        {
+            this.previous = initial;
+            this.X = new List<string>(this.previous.X);
+            this.Xbv = new List<string>(this.previous.Xbv);
+            this.handleInt = this.previous.handleInt;
+            this.C = this.previous.C.Clone();
+            this.A = this.previous.A.Clone();
+            this.b = this.previous.b.Clone();
+            this.objective = this.previous.objective;
+            this.z = this.previous.z;
+            this.Xint = new List<string>(this.previous.Xint);
+            this.pivotColumnIndex = this.previous.pivotColumnIndex;
+            this.pivotRowIndex = this.previous.pivotRowIndex;
+            int nextIndex = this.X.Where((name) => !name.Contains('x')).Select(name => int.Parse(name.Substring(1))).Max() + 1;
+            this.X.Add(constraintName + nextIndex);
+            this.Xbv.Add(constraintName + nextIndex);
+
+            this.C = this.C.InsertColumn(this.C.ColumnCount, V.DenseOfArray(new double[] { 0 }));
+            this.A = this.A.InsertColumn(this.A.ColumnCount, V.DenseOfArray((this.A.SubMatrix(0, this.A.RowCount, 0, 1) * 0).ToColumnMajorArray()));
+            this.A = this.A.InsertRow(this.A.RowCount, V.DenseOfArray(constraint.Item1.ToRowMajorArray()));
+            this.b = b.InsertRow(b.RowCount, V.DenseOfArray(new double[] { constraint.Item2 }));
+
+            this.IteratateSimplex();
+        }
+
         private void IteratateSimplex()
         {
             SolveTableua();
@@ -76,11 +111,9 @@ namespace LinearProgramming.LinearProgramming
             if (!this.feasible) PivotDual();
             else if (!this.optimal) PivotSimplex();
 
-            GetTable();
-
             if (isInfeasible) return;
 
-            if (!(this.feasible && this.optimal)) this.Next();
+            if (!(this.feasible && this.optimal)) this.next = new SimplexTableua(this);
             else
             {
                 List<string> branchXbv = GetBasicVariables(this.Xbv, this.pivotRowIndex, this.pivotColumnIndex, this.X);
@@ -90,7 +123,8 @@ namespace LinearProgramming.LinearProgramming
                 {
                     double minRhs = b.ToColumnMajorArray().Select((val, i) => (Math.Abs(val - 0.5) % 1) + (Xint.Contains(branchXbv[i]) ? 0 : 1)).Min();
                     string basicInt = Xint.Where((x) => branchXbv.Contains(x)).ToList().Find((x) => Math.Round(Math.Abs((0.5 - b.ToColumnMajorArray()[branchXbv.ToList().IndexOf(x)]) % 1), 10) == Math.Round(minRhs, 10));
-                    Branch(basicInt);
+                    if(handleInt == "branch") Branch(basicInt);
+                    else Cut(basicInt);
                 }
             }
         }
@@ -137,10 +171,10 @@ namespace LinearProgramming.LinearProgramming
             this.pivotRowIndex = degenRowElement != null ? degenRowElement.Item1 : pivotColumnRatio.Find((val) => val == minRatio).Item1;
         }
 
+
         private List<string> GetBasicVariables(List<string> Xbv, int pivotRowIndex, int pivotColumnIndex, List<string> X)
         {
             List<string> newXbv = Xbv;
-            // Update the basic variables using the previous table's pivot column and row.
             newXbv = Xbv;
             newXbv[pivotRowIndex] = X[pivotColumnIndex];
             return newXbv;
@@ -151,7 +185,7 @@ namespace LinearProgramming.LinearProgramming
             return new SimplexTableua(this);
         }
 
-        public Tuple<SimplexTableua, SimplexTableua> Branch(string variable)
+        public void Branch(string variable)
         {
             double branchValue = this.b.ToColumnMajorArray()[this.Xbv.ToList().IndexOf(variable)];
             double lb = - (branchValue - Math.Floor(branchValue));
@@ -167,14 +201,19 @@ namespace LinearProgramming.LinearProgramming
             Tuple<Matrix<double>, double> lc = new Tuple<Matrix<double>, double>(lbr, lb);
             Tuple<Matrix<double>, double> uc = new Tuple<Matrix<double>, double>(ubr, ub);
 
-            SimplexTableua lower = new SimplexTableua((SimplexTableua)this.MemberwiseClone(), "s", lc);
-            SimplexTableua upper = new SimplexTableua((SimplexTableua)this.MemberwiseClone(), "e", uc);
-
-            return new Tuple<SimplexTableua, SimplexTableua> (lower, upper);
+            this.branchL = new SimplexTableua((SimplexTableua)this.MemberwiseClone(), "s", lc);
+            this.branchR = new SimplexTableua((SimplexTableua)this.MemberwiseClone(), "e", uc);
         }
-        public SimplexTableua Cut(string variable)
+        public void Cut(string variable)
         {
-            return new SimplexTableua(this);
+            double branchValue = this.b.ToColumnMajorArray()[this.Xbv.ToList().IndexOf(variable)];
+            double b = -(branchValue % 1);
+
+            Matrix<double> branchRow = this.A.SubMatrix(this.Xbv.ToList().IndexOf(variable), 1, 0, this.A.ColumnCount);
+            Matrix<double> br = (-(branchRow.Modulus(1))).Append(M.SparseOfColumnMajor(1, 1, new double[] { 1 }));
+
+            Tuple<Matrix<double>, double> cc = new Tuple<Matrix<double>, double>(br, b);
+            this.next = new SimplexTableua((SimplexTableua)this.MemberwiseClone(), "s", cc);
         }
 
         public void GetTable()
@@ -185,11 +224,13 @@ namespace LinearProgramming.LinearProgramming
 
             Console.WriteLine(ti.ToString());
         }
+
         public void SetFromPrevious(SimplexTableua previous)
         {
             this.previous = previous;
             this.X = new List<string>(this.previous.X);
             this.Xbv = new List<string>(this.previous.Xbv);
+            this.handleInt = this.previous.handleInt;
             this.C = this.previous.C.Clone();
             this.A = this.previous.A.Clone();
             this.b = this.previous.b.Clone();

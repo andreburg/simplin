@@ -4,9 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace LinearProgramming.LinearProgramming.Alogrithms
+namespace LinearProgramming.LinearProgramming.Simplex
 {
-    internal class CuttingPlane
+    class BranchAndBoundSimplex
     {
     }
 }

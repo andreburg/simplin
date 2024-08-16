@@ -15,12 +15,15 @@ namespace LinearProgramming.LinearProgramming
 
     internal class Constraint
     {
-        double[] coeficients;
+        public double[] coeficients;
         double rhs;
-        ConstraintType type;
+        public ConstraintType type;
         public List<string> variables;
+        public bool pOfE;
+        public int number;
 
-        public Constraint(double[] coeficients, ConstraintType type, double rhs, int constraintNumber) { 
+        public Constraint(double[] coeficients, ConstraintType type, double rhs, int constraintNumber, bool pOfE = false) { 
+            this.number = constraintNumber;
             this.coeficients = coeficients.Append(type == ConstraintType.gte ? -1 : 1).ToArray();
             this.rhs = rhs;
             this.type = type;
